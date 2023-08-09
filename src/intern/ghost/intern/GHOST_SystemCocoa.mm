@@ -1,20 +1,20 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later
  * Copyright 2001-2002 NaN Holding BV. All rights reserved. */
 
-#include "GHOST_SystemCocoa.h"
+#include "GHOST_SystemCocoa.hh"
 
-#include "GHOST_DisplayManagerCocoa.h"
-#include "GHOST_EventButton.h"
-#include "GHOST_EventCursor.h"
-#include "GHOST_EventDragnDrop.h"
-#include "GHOST_EventKey.h"
-#include "GHOST_EventString.h"
-#include "GHOST_EventTrackpad.h"
-#include "GHOST_EventWheel.h"
-#include "GHOST_TimerManager.h"
-#include "GHOST_TimerTask.h"
-#include "GHOST_WindowCocoa.h"
-#include "GHOST_WindowManager.h"
+#include "GHOST_DisplayManagerCocoa.hh"
+#include "GHOST_EventButton.hh"
+#include "GHOST_EventCursor.hh"
+#include "GHOST_EventDragnDrop.hh"
+#include "GHOST_EventKey.hh"
+#include "GHOST_EventString.hh"
+#include "GHOST_EventTrackpad.hh"
+#include "GHOST_EventWheel.hh"
+#include "GHOST_TimerManager.hh"
+#include "GHOST_TimerTask.hh"
+#include "GHOST_WindowCocoa.hh"
+#include "GHOST_WindowManager.hh"
 
 /* Don't generate OpenGL deprecation warning. This is a known thing, and is not something easily
  * solvable in a short term. */
@@ -22,14 +22,14 @@
 #  pragma clang diagnostic ignored "-Wdeprecated-declarations"
 #endif
 
-#include "GHOST_ContextCGL.h"
+#include "GHOST_ContextCGL.hh"
 
 #ifdef WITH_VULKAN_BACKEND
-#  include "GHOST_ContextVK.h"
+#  include "GHOST_ContextVK.hh"
 #endif
 
 #ifdef WITH_INPUT_NDOF
-#  include "GHOST_NDOFManagerCocoa.h"
+#  include "GHOST_NDOFManagerCocoa.hh"
 #endif
 
 #include "AssertMacros.h"
@@ -76,7 +76,7 @@ static GHOST_TButton convertButton(int button)
  * \param recvChar: the character ignoring modifiers (except for shift)
  * \return Ghost key code
  */
-static GHOST_TKey convertKey(int rawCode, unichar recvChar, UInt16 keyAction)
+static GHOST_TKey convertKey(int rawCode, unichar recvChar)
 {
   // printf("\nrecvchar %c 0x%x",recvChar,recvChar);
   switch (rawCode) {
@@ -237,7 +237,10 @@ static GHOST_TKey convertKey(int rawCode, unichar recvChar, UInt16 keyAction)
       return GHOST_kKeyUpPage;
     case kVK_PageDown:
       return GHOST_kKeyDownPage;
-#if 0 /* TODO: why are these commented? */
+#if 0
+    /* These constants with "ANSI" in the name are labeled according to the key position on an
+     * ANSI-standard US keyboard. Therefore they may not match the physical key label on other
+     * keyboard layouts. */
     case kVK_ANSI_Minus:        return GHOST_kKeyMinus;
     case kVK_ANSI_Equal:        return GHOST_kKeyEqual;
     case kVK_ANSI_Comma:        return GHOST_kKeyComma;
@@ -283,10 +286,10 @@ static GHOST_TKey convertKey(int rawCode, unichar recvChar, UInt16 keyAction)
 
           UCKeyTranslate((UCKeyboardLayout *)CFDataGetBytePtr(uchrHandle),
                          rawCode,
-                         keyAction,
+                         kUCKeyActionDown,
                          0,
                          LMGetKbdType(),
-                         kUCKeyTranslateNoDeadKeysBit,
+                         kUCKeyTranslateNoDeadKeysMask,
                          &deadKeyState,
                          1,
                          &actualStrLength,
@@ -429,8 +432,7 @@ extern "C" int GHOST_HACK_getFirstFile(char buf[FIRSTFILEBUFLG])
 - (void)applicationWillTerminate:(NSNotification *)aNotification
 {
 #if 0
-  G.is_break = false; /* Let Cocoa perform the termination at the end. */
-  WM_exit(C);
+  WM_exit(C, EXIT_SUCCESS);
 #endif
 }
 
@@ -530,9 +532,7 @@ GHOST_SystemCocoa::GHOST_SystemCocoa()
   m_last_warp_timestamp = 0;
 }
 
-GHOST_SystemCocoa::~GHOST_SystemCocoa()
-{
-}
+GHOST_SystemCocoa::~GHOST_SystemCocoa() {}
 
 GHOST_TSuccess GHOST_SystemCocoa::init()
 {
@@ -763,7 +763,7 @@ GHOST_IContext *GHOST_SystemCocoa::createOffscreenContext(GHOST_GLSettings glSet
 #ifdef WITH_VULKAN_BACKEND
   if (glSettings.context_type == GHOST_kDrawingContextTypeVulkan) {
     const bool debug_context = (glSettings.flags & GHOST_glDebugContext) != 0;
-    GHOST_Context *context = new GHOST_ContextVK(false, NULL, 1, 0, debug_context);
+    GHOST_Context *context = new GHOST_ContextVK(false, NULL, 1, 2, debug_context);
     if (!context->initializeDrawingContext()) {
       delete context;
       return NULL;
@@ -900,6 +900,17 @@ GHOST_TSuccess GHOST_SystemCocoa::getButtons(GHOST_Buttons &buttons) const
   return GHOST_kSuccess;
 }
 
+GHOST_TCapabilityFlag GHOST_SystemCocoa::getCapabilities() const
+{
+  return GHOST_TCapabilityFlag(
+      GHOST_CAPABILITY_FLAG_ALL &
+      ~(
+          /* Cocoa has no support for a primary selection clipboard. */
+          GHOST_kCapabilityPrimaryClipboard |
+          /* This Cocoa back-end has not yet implemented image copy/paste. */
+          GHOST_kCapabilityClipboardImages));
+}
+
 #pragma mark Event handlers
 
 /**
@@ -956,7 +967,8 @@ bool GHOST_SystemCocoa::processEvents(bool waitForEvent)
       // special hotkeys to switch between views, so override directly
 
       if ([event type] == NSEventTypeKeyDown && [event keyCode] == kVK_Tab &&
-          ([event modifierFlags] & NSEventModifierFlagControl)) {
+          ([event modifierFlags] & NSEventModifierFlagControl))
+      {
         handleKeyEvent(event);
       }
       else {
@@ -1248,7 +1260,8 @@ GHOST_TSuccess GHOST_SystemCocoa::handleDraggingEvent(GHOST_TEventType eventType
             return GHOST_kFailure;
 
           if (([bitmapImage bitsPerPixel] == 32) && (([bitmapImage bitmapFormat] & 0x5) == 0) &&
-              ![bitmapImage isPlanar]) {
+              ![bitmapImage isPlanar])
+          {
             /* Try a fast copy if the image is a meshed RGBA 32bit bitmap. */
             toIBuf = (uint8_t *)ibuf->rect;
             rasterRGB = (uint8_t *)[bitmapImage bitmapData];
@@ -1394,7 +1407,9 @@ bool GHOST_SystemCocoa::handleOpenDocumentRequest(void *filepathStr)
     [[windowsList objectAtIndex:0] makeKeyAndOrderFront:nil];
   }
 
-  GHOST_Window *window = (GHOST_Window *)m_windowManager->getActiveWindow();
+  GHOST_Window *window = m_windowManager->getWindows().empty() ?
+                             NULL :
+                             (GHOST_Window *)m_windowManager->getWindows().front();
 
   if (!window) {
     return NO;
@@ -1817,18 +1832,13 @@ GHOST_TSuccess GHOST_SystemCocoa::handleKeyEvent(void *eventPtr)
 
     case NSEventTypeKeyDown:
     case NSEventTypeKeyUp:
+      /* Returns an empty string for dead keys. */
       charsIgnoringModifiers = [event charactersIgnoringModifiers];
       if ([charsIgnoringModifiers length] > 0) {
-        keyCode = convertKey([event keyCode],
-                             [charsIgnoringModifiers characterAtIndex:0],
-                             [event type] == NSEventTypeKeyDown ? kUCKeyActionDown :
-                                                                  kUCKeyActionUp);
+        keyCode = convertKey([event keyCode], [charsIgnoringModifiers characterAtIndex:0]);
       }
       else {
-        keyCode = convertKey([event keyCode],
-                             0,
-                             [event type] == NSEventTypeKeyDown ? kUCKeyActionDown :
-                                                                  kUCKeyActionUp);
+        keyCode = convertKey([event keyCode], 0);
       }
 
       characters = [event characters];
@@ -1907,8 +1917,8 @@ GHOST_TSuccess GHOST_SystemCocoa::handleKeyEvent(void *eventPtr)
             GHOST_kKeyLeftControl,
             false));
       }
-      if ((modifiers & NSEventModifierFlagOption) !=
-          (m_modifierMask & NSEventModifierFlagOption)) {
+      if ((modifiers & NSEventModifierFlagOption) != (m_modifierMask & NSEventModifierFlagOption))
+      {
         pushEvent(new GHOST_EventKey(
             [event timestamp] * 1000,
             (modifiers & NSEventModifierFlagOption) ? GHOST_kEventKeyDown : GHOST_kEventKeyUp,

@@ -3,13 +3,13 @@
 //  Loop
 //
 //  Created by Jingwei on 10/22/17.
-//  Copyright ï¿½ 2017 Jingwei. All rights reserved.
+//  Copyright © 2017 Jingwei. All rights reserved.
 //
 
 #include "loader.hpp"
 
-#include <fstream>
 #include <cstdint>
+#include <fstream>
 #include <unordered_map>
 
 namespace qflow {
